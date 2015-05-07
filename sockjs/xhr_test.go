@@ -46,7 +46,11 @@ func TestHandler_XhrSendWrongUrlPath(t *testing.T) {
 
 func TestHandler_XhrSendToExistingSession(t *testing.T) {
 	h := newTestHandler()
-	sess := newSession("session", time.Second, time.Second)
+	opts := Options{
+		DisconnectDelay: time.Second,
+		HeartbeatDelay:  time.Second,
+	}
+	sess := newSession("session", &opts)
 	h.sessions["session"] = sess
 
 	rec := httptest.NewRecorder()
@@ -125,7 +129,11 @@ func TestHandler_XhrPollConnectionInterrupted(t *testing.T) {
 func TestHandler_XhrPollAnotherConnectionExists(t *testing.T) {
 	h := newTestHandler()
 	// turn of timeoutes and heartbeats
-	sess := newSession("session", time.Hour, time.Hour)
+	opts := Options{
+		DisconnectDelay: time.Hour,
+		HeartbeatDelay:  time.Hour,
+	}
+	sess := newSession("session", &opts)
 	h.sessions["session"] = sess
 	sess.attachReceiver(newTestReceiver())
 	req, _ := http.NewRequest("POST", "/server/session/xhr", nil)

@@ -40,6 +40,9 @@ type Options struct {
 	// This delay is configured by this setting.
 	// By default the session is closed when a receiving connection wasn't seen for 5 seconds.
 	DisconnectDelay time.Duration
+	// After every heartbeat is sent, this function is called to notify an interested listener.
+	// By default it is not set, and therefore no function will be called.
+	HeartbeatSent func(Session)
 	// Some hosting providers enable sticky sessions only to requests that have JSessionID cookie set.
 	// This setting controls if the server should set this cookie to a dummy value.
 	// By default setting JSessionID cookie is disabled. More sophisticated behaviour can be achieved by supplying a function.

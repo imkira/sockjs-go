@@ -47,9 +47,10 @@ type session struct {
 	closeFrame string
 
 	// internal timer used to handle session expiration if no receiver is attached, or heartbeats if recevier is attached
-	sessionTimeoutInterval time.Duration
-	heartbeatInterval      time.Duration
-	timer                  *time.Timer
+	timeoutInterval   time.Duration
+	heartbeatInterval time.Duration
+	heartbeatSent     func(Session)
+	timer             *time.Timer
 	// once the session timeouts this channel also closes
 	closeCh chan struct{}
 }
@@ -69,19 +70,20 @@ type receiver interface {
 }
 
 // Session is a central component that handles receiving and sending frames. It maintains internal state
-func newSession(sessionID string, sessionTimeoutInterval, heartbeatInterval time.Duration) *session {
+func newSession(sessionID string, opts *Options) *session {
 	r, w := io.Pipe()
 	s := &session{
-		id:                     sessionID,
-		msgReader:              r,
-		msgWriter:              w,
-		msgEncoder:             gob.NewEncoder(w),
-		msgDecoder:             gob.NewDecoder(r),
-		sessionTimeoutInterval: sessionTimeoutInterval,
-		heartbeatInterval:      heartbeatInterval,
-		closeCh:                make(chan struct{})}
+		id:                sessionID,
+		msgReader:         r,
+		msgWriter:         w,
+		msgEncoder:        gob.NewEncoder(w),
+		msgDecoder:        gob.NewDecoder(r),
+		timeoutInterval:   opts.DisconnectDelay,
+		heartbeatInterval: opts.HeartbeatDelay,
+		heartbeatSent:     opts.HeartbeatSent,
+		closeCh:           make(chan struct{})}
 	s.Lock() // "go test -race" complains if ommited, not sure why as no race can happen here
-	s.timer = time.AfterFunc(sessionTimeoutInterval, s.close)
+	s.timer = time.AfterFunc(s.timeoutInterval, s.close)
 	s.Unlock()
 	return s
 }
@@ -137,16 +139,21 @@ func (s *session) detachReceiver() {
 	s.Lock()
 	defer s.Unlock()
 	s.timer.Stop()
-	s.timer = time.AfterFunc(s.sessionTimeoutInterval, s.close)
+	s.timer = time.AfterFunc(s.timeoutInterval, s.close)
 	s.recv = nil
 }
 
 func (s *session) heartbeat() {
 	s.Lock()
-	defer s.Unlock()
+	var heartbeatSent func(Session)
 	if s.recv != nil { // timer could have fired between Lock and timer.Stop in detachReceiver
 		s.recv.sendFrame("h")
 		s.timer = time.AfterFunc(s.heartbeatInterval, s.heartbeat)
+		heartbeatSent = s.heartbeatSent
+	}
+	s.Unlock()
+	if heartbeatSent != nil {
+		heartbeatSent(s)
 	}
 }
 

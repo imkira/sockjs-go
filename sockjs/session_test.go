@@ -10,7 +10,11 @@ import (
 
 func newTestSession() *session {
 	// session with long expiration and heartbeats with ID
-	return newSession("sessionId", 1000*time.Second, 1000*time.Second)
+	opts := Options{
+		DisconnectDelay: 1000 * time.Second,
+		HeartbeatDelay:  1000 * time.Second,
+	}
+	return newSession("sessionId", &opts)
 }
 
 func TestSession_Create(t *testing.T) {
@@ -75,7 +79,11 @@ func TestSession_AttachReceiver(t *testing.T) {
 }
 
 func TestSession_Timeout(t *testing.T) {
-	sess := newSession("id", 10*time.Millisecond, 10*time.Second)
+	opts := Options{
+		DisconnectDelay: 10 * time.Millisecond,
+		HeartbeatDelay:  10 * time.Second,
+	}
+	sess := newSession("id", &opts)
 	select {
 	case <-sess.closeCh:
 	case <-time.After(20 * time.Millisecond):
@@ -94,7 +102,11 @@ func TestSession_TimeoutOfClosedSession(t *testing.T) {
 			t.Errorf("Unexcpected error '%v'", r)
 		}
 	}()
-	sess := newSession("id", 1*time.Millisecond, time.Second)
+	opts := Options{
+		DisconnectDelay: 1 * time.Millisecond,
+		HeartbeatDelay:  time.Second,
+	}
+	sess := newSession("id", &opts)
 	sess.closing()
 	time.Sleep(1 * time.Millisecond)
 	sess.closing()
@@ -106,18 +118,43 @@ func TestSession_AttachReceiverAndCheckHeartbeats(t *testing.T) {
 			t.Errorf("Unexcpected error '%v'", r)
 		}
 	}()
-	session := newSession("id", time.Second, 10*time.Millisecond) // 10ms heartbeats
+	var sessions []Session
+	sessionsLock := &sync.Mutex{}
+	heartbeatSent := func(s Session) {
+		sessionsLock.Lock()
+		defer sessionsLock.Unlock()
+		sessions = append(sessions, s)
+	}
+	opts := Options{
+		DisconnectDelay: time.Second,
+		HeartbeatDelay:  10 * time.Millisecond, // 10ms heartbeats
+		HeartbeatSent:   heartbeatSent,
+	}
+	session := newSession("id", &opts)
 	recv := newTestReceiver()
 	defer close(recv.doneCh)
 	session.attachReceiver(recv)
 	time.Sleep(120 * time.Millisecond)
 	recv.Lock()
+	defer recv.Unlock()
+	sessionsLock.Lock()
+	defer sessionsLock.Unlock()
 	if len(recv.frames) < 10 || len(recv.frames) > 13 { // should get around 10 heartbeats (120ms/10ms)
 		t.Fatalf("Wrong number of frames received, got '%d'", len(recv.frames))
 	}
+	heartbeatFrameCount := 0
 	for i := 1; i < len(recv.frames); i++ {
 		if recv.frames[i] != "h" {
 			t.Errorf("Heartbeat no received")
+		}
+		heartbeatFrameCount++
+	}
+	if len(sessions) != heartbeatFrameCount {
+		t.Fatalf("Expected HeartbeatSent to be called '%d' times but got '%d' times", heartbeatFrameCount, len(sessions))
+	}
+	for _, s := range sessions {
+		if s != session {
+			t.Errorf("Got invalid session")
 		}
 	}
 }
@@ -211,7 +248,13 @@ func TestSession_Closing(t *testing.T) {
 }
 
 // Session as Session Tests
-func TestSession_AsSession(t *testing.T) { var _ Session = newSession("id", 0, 0) }
+func TestSession_AsSession(t *testing.T) {
+	opts := Options{
+		DisconnectDelay: 0,
+		HeartbeatDelay:  0,
+	}
+	var _ Session = newSession("id", &opts)
+}
 
 func TestSession_SessionRecv(t *testing.T) {
 	s := newTestSession()
